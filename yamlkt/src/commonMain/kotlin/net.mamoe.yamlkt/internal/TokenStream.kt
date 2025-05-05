@@ -22,6 +22,7 @@ internal enum class Token(val value: Char) {
     MAP_BEGIN('{'),
     MAP_END('}'),
 
+    COMPLEX_KEY_BEGIN('?'),
 
     STRING(' '),
     STRING_NULL(' ');
@@ -274,6 +275,11 @@ internal class TokenStream(
                 '-' -> {
                     currentIndent++
                     return Token.MULTILINE_LIST_FLAG
+                }
+
+                '?' -> {
+                    currentIndent++
+                    return Token.COMPLEX_KEY_BEGIN
                 }
 
                 '#' -> {

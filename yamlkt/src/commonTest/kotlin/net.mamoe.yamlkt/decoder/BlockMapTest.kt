@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.decodeFromString
 import net.mamoe.yamlkt.Yaml
 import net.mamoe.yamlkt.Yaml.Default
 import net.mamoe.yamlkt.toContentMap
@@ -180,6 +181,20 @@ t:
                         nullableMap:
                         nullableList: 
                     """.trimIndent()
+            )
+        )
+    }
+
+    //from https://github.com/Him188/yamlkt/issues/45
+    @Test
+    fun testComplexKey() {
+        assertEquals(
+            mapOf(listOf(1,2) to "outer_value"),
+            Yaml.decodeFromString<Map<List<Int>, String>>(
+                """
+                    ? - 1
+                      - 2
+                    : outer_value"""
             )
         )
     }

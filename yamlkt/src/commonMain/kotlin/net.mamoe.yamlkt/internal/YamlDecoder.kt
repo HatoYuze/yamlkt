@@ -344,7 +344,8 @@ internal class YamlDecoder(
     inner class BlockMapDecoder(
         baseIndent: Int
     ) : IndentedDecoder(baseIndent, "Yaml Block Map") {
-        override val stopOnComma: Boolean get() = false
+        override val stopOnComma: Boolean get() = _isFlowStyle
+        private var _isFlowStyle: Boolean = false
         private var index = 0
         override val kind: Kind
             get() = Kind.BLOCK_MAP
@@ -362,6 +363,39 @@ internal class YamlDecoder(
             }
         }
 
+        private fun hasInvalidOrReducedIndent(): Boolean {
+            if (tokenStream.currentIndent < baseIndent) {
+                Debugging.logCustom { "BlockMapDecoder exit: crt=${tokenStream.currentIndent}, base=$baseIndent" }
+                tokenStream.reuseToken(tokenStream.strBuff!!)
+                return false
+            }
+            if (!checkIndent(tokenStream.currentIndent)) {
+                return false
+            }
+            return true
+        }
+
+        private fun validateNextKeyValueDelimiter(descriptor: SerialDescriptor) {
+            val current = tokenStream.nextToken()
+            if (current != Token.COLON) {
+                throw tokenStream.contextualDecodingException("There must be a COLON between map key and value but found $current for '${descriptor.serialName}'")
+            }
+
+            if (tokenStream.endOfInput) {
+                return
+            }
+            val char = tokenStream.source[tokenStream.cur]
+            if (!char.isWhitespace()) {
+                throw tokenStream.contextualDecodingException("Expected whitespace after COLON but found $char for '${descriptor.serialName}'")
+            }
+        }
+        private fun TokenStream.reuseToken(element: Any) =
+            when (element) {
+                Token.STRING -> tokenStream.reuseToken(tokenStream.strBuff!!)
+                is Token -> tokenStream.reuseToken(element)
+                is String -> tokenStream.reuseToken(element)
+                else -> throw IllegalStateException("Unexpected element type: ${element::class}")
+            }
         override fun decodeElementIndex(descriptor: SerialDescriptor): Int {
             if (index.isOdd()) {
                 return index++
@@ -369,38 +403,95 @@ internal class YamlDecoder(
 
             when (val token = tokenStream.nextToken()) {
                 END_OF_FILE -> return READ_DONE // in block map it's ok
-
                 Token.STRING -> {
-                    if (tokenStream.currentIndent < baseIndent) {
-                        Debugging.logCustom { "BlockMapDecoder exit: crt=${tokenStream.currentIndent}, base=$baseIndent" }
-                        tokenStream.reuseToken(tokenStream.strBuff!!)
-                        return READ_DONE
-                    }
+                    hasInvalidOrReducedIndent() || return READ_DONE
 
-                    if (!checkIndent(tokenStream.currentIndent)) {
-                        return READ_DONE
-                    }
-                    val current = tokenStream.nextToken()
-                    if (current != Token.COLON) {
-                        throw tokenStream.contextualDecodingException("There must be a COLON between map key and value but found $current for '${descriptor.serialName}'")
-                    } else if (!tokenStream.endOfInput) {
-                        val char = tokenStream.source[tokenStream.cur]
-                        if (!char.isWhitespace()) {
-                            throw tokenStream.contextualDecodingException("Expected whitespace after COLON but found $char for '${descriptor.serialName}'")
-                        }
-                    }
+                    validateNextKeyValueDelimiter(descriptor)
                     tokenStream.reuseToken(tokenStream.strBuff!!)
                     return index++
                 }
-                // nested
-                // Token.LIST_BEGIN, Token.MULTILINE_LIST_FLAG,
+                Token.COMPLEX_KEY_BEGIN -> {
+                    val contentStartToken = tokenStream.nextToken().takeIf { it != END_OF_FILE }
+                        ?: return READ_DONE
+
+                    if (contentStartToken in listOf(Token.MAP_BEGIN, Token.LIST_BEGIN)) {
+                        _isFlowStyle = true
+                    }
+
+                    try {
+                        return complexKeyImpl(descriptor, contentStartToken)
+                    }finally {
+                        _isFlowStyle = false
+                    }
+                }
                 else -> { // even if the token is illegal, it's parent decoders' responsibility to throw the exception
                     tokenStream.reuseToken(token)
                     return READ_DONE
                 }
             }
         }
+
+        private fun complexKeyImpl(descriptor: SerialDescriptor,contentStartToken: Token): Int {
+            val complexKeyStartIdx = tokenStream.cur
+            fun isInSameLine() = tokenStream.source.subSequence(complexKeyStartIdx, tokenStream.cur).none { it.isLineSeparator() }
+
+            // FIXME: Current implementation only supports single-level nesting.
+            //  Should fix to allow proper multi-level nesting logic.
+
+            val elements = buildList<Any> {
+                add(contentStartToken)
+                while (true) {
+                    val nextToken = tokenStream.nextToken()
+
+                    // Validate indentation: Should match complex key base indent unless at root
+                    if (tokenStream.currentIndent < baseIndent && tokenStream.currentIndent != 0) {
+                        throw tokenStream.contextualDecodingException(
+                            "Missing colon with correct indentation (expected: $baseIndent, actual: ${tokenStream.currentIndent})"
+                        )
+                    }
+
+                    when (nextToken) {
+                        END_OF_FILE -> throw tokenStream.contextualDecodingException("Early EOF. Expected ':'")
+                        Token.COLON -> {
+                            if (isInSameLine() && !_isFlowStyle) { // ignore the not flow-styles
+                                add(nextToken)
+                                continue
+                            }
+                            /* COLON must appear at the same indentation level as COMPLEX_KEY_BEGIN.
+                                If indentation differs, treat it as nested content and skip special processing.*/
+                            if (tokenStream.currentIndent != baseIndent) {
+                                add(nextToken)
+                                continue
+                            }
+                            tokenStream.reuseToken(nextToken)
+                            validateNextKeyValueDelimiter(descriptor)
+                            break
+                        }
+
+                        Token.STRING -> add(tokenStream.strBuff!!)
+                        else -> {
+                            if (_isFlowStyle || tokenStream.currentIndent > this@BlockMapDecoder.baseIndent) {
+                                add(nextToken)
+                                continue
+                            }
+                            throw tokenStream.contextualDecodingException(
+                                "Complex key elements must have greater indentation than base level"
+                            )
+                        }
+                    }
+                }
+            }
+
+            tokenStream.nextToken()?.let { tokenStream.reuseToken(it as Any) } // Value
+            elements.asReversed()
+                .onEach { tokenStream.reuseToken(it) } // Key
+
+            index++
+            _isFlowStyle = false
+            return index - 1
+        }
     }
+
 
 
     /**
@@ -888,6 +979,11 @@ internal class YamlDecoder(
                     Token.MAP_BEGIN -> {
                         // tokenStream.reuseToken(token)
                         FlowMapDecoder()
+                    }
+
+                    Token.COMPLEX_KEY_BEGIN -> {
+                        tokenStream.reuseToken(token)
+                        BlockMapDecoder(tokenStream.currentIndent)
                     }
 
                     Token.STRING -> {
