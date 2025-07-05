@@ -1,6 +1,7 @@
 package net.mamoe.yamlkt.decoder
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import net.mamoe.yamlkt.Yaml
 import net.mamoe.yamlkt.Yaml.Default
 import kotlin.test.Test
@@ -165,5 +166,13 @@ internal class FlowMapTest {
     @Test
     fun ttt() {
         println(Default.decodeMapFromString("'123456789': 123456789"))
+    }
+
+    @Test
+    fun complexMap() {
+        assertEquals(
+            mapOf(listOf(mapOf("inner_key" to "inner_value")) to "outside_value"),
+            Yaml.decodeFromString<Map<List<Map<String, String>>, String>>("{? [{'inner_key': 'inner_value'}]: 'outside_value'}")
+        )
     }
 }

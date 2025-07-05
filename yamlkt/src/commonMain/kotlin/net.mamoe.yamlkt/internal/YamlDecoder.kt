@@ -566,6 +566,13 @@ internal class YamlDecoder(
                     }
                     index++
                 }
+                Token.COMPLEX_KEY_BEGIN -> {
+                    val keyStartIndex = tokenStream.cur
+                    decodeComplexKeyIndex()
+                    tokenStream.ignoreIndex = tokenStream.cur
+                    tokenStream.cur = keyStartIndex
+                    index.also { index = index + 1 }
+                }
 
                 Token.MAP_END -> READ_DONE
                 Token.COMMA -> { // null entry, meaning `{ name: Bob, }` // we are at ','
@@ -584,6 +591,21 @@ internal class YamlDecoder(
 
                 else -> throw contextualDecodingException("Illegal token $token")
             }
+        }
+
+        private fun decodeComplexKeyIndex() {
+            var innerMapCount = 0
+            while (true) {
+                when(tokenStream.nextToken()) {
+                    Token.MAP_BEGIN -> innerMapCount++
+                    Token.MAP_END -> innerMapCount--
+                    Token.COLON -> {
+                        if (innerMapCount == 0) return
+                    }
+                    else -> {}
+                }
+            }
+            throw contextualDecodingException("There must be a COMMA between flow map entries")
         }
     }
 
