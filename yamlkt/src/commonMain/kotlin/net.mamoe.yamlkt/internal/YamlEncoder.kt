@@ -13,8 +13,6 @@ import kotlinx.serialization.encoding.CompositeEncoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.modules.SerializersModule
 import net.mamoe.yamlkt.*
-import net.mamoe.yamlkt.internal.YamlEncoder.AbstractEncoder
-import net.mamoe.yamlkt.internal.YamlEncoder.BlockMapOrClassEncoder
 import kotlin.jvm.JvmMultifileClass
 import kotlin.jvm.JvmName
 
@@ -133,7 +131,7 @@ internal class YamlEncoder(
         // region for map
 
         private var isKey: Boolean = true
-        private inline fun structuredKeyValue(block: YamlWriter.() -> Unit) {
+        private inline fun structuredKeyValue(isObject: Boolean = false,block: YamlWriter.() -> Unit) {
             val isKey = isKey.also { isKey = !isKey }
             if (isKey) {
                 writer.write(' ')
@@ -141,6 +139,9 @@ internal class YamlEncoder(
                     justStarted = false
                 } else writer.write(',')
 
+                if (isObject) {
+                    writer.write("? ")
+                }
                 writer.block()
                 writer.write(": ")
             } else {
@@ -188,7 +189,7 @@ internal class YamlEncoder(
         ) {
             if (descriptor.kind == StructureKind.CLASS) {
                 super.encodeSerializableElement0(descriptor, index, serializer, value)
-            } else structuredKeyValue {
+            } else structuredKeyValue(true) {
                 super.encodeSerializableElement0(descriptor, index, serializer, value)
             }
         }
@@ -350,16 +351,23 @@ internal class YamlEncoder(
         private var justStarted = true
 
         private var isKey: Boolean = true
-        private inline fun structuredKeyValue(block: YamlWriter.() -> Unit) {
+        private inline fun structuredKeyValue(isObject: Boolean = false, block: YamlWriter.() -> Unit) {
             val isKey = isKey.also { isKey = !it }
             if (isKey) {
                 if (justStarted) {
                     if (parent is BlockMapOrClassEncoder) writer.writeln()
                     justStarted = false
                 } else writer.writeln()
-
                 writer.writeIndentSmart()
+                if (isObject) {
+                    writer.write('?')
+                    writer.levelIncrease()
+                    writer.writeIndentSmart()
+                }
                 writer.block()
+                if (isObject) {
+                    writer.writeln()
+                }
                 writer.write(": ")
             } else {
                 writer.block()
@@ -392,7 +400,7 @@ internal class YamlEncoder(
             value: T
         ) {
             Debugging.logCustom { "encodeSerializableElement0, elementName=${descriptor.getElementName(index)}" }
-            structuredKeyValue {
+            structuredKeyValue(true) {
                 super.encodeSerializableElement0(descriptor, index, serializer, value)
             }
         }

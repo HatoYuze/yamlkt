@@ -49,4 +49,10 @@ internal class BlockMapTest {
     fun testEmptyClass() {
         assertEquals("{}", allBlock.encodeToString(Empty()).trim())
     }
+
+    @Test
+    fun testComplexKey() {
+        assertEquals("? \n  - 1\n  - 2\n: abc", allBlock.encodeToString(mapOf(listOf(1,2) to "abc")))
+        assertEquals("{ ? [ 1, 2 ]: abc }", allFlow.encodeToString(mapOf(listOf(1,2) to "abc")))
+    }
 }
