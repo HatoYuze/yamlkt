@@ -1,6 +1,7 @@
 package net.mamoe.yamlkt.encoder
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import net.mamoe.yamlkt.Yaml
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,7 +53,11 @@ internal class BlockMapTest {
 
     @Test
     fun testComplexKey() {
-        assertEquals("? \n  - 1\n  - 2\n: abc", allBlock.encodeToString(mapOf(listOf(1,2) to "abc")))
-        assertEquals("{ ? [ 1, 2 ]: abc }", allFlow.encodeToString(mapOf(listOf(1,2) to "abc")))
+        val origin = mapOf(listOf(1,2) to "abc")
+        val out = allBlock.encodeToString(origin)
+        val new = allBlock.decodeFromString<Map<List<Int>, String>>(out)
+        val newFlow = allBlock.decodeFromString<Map<List<Int>, String>>(allFlow.encodeToString(origin))
+        assertEquals(origin, new)
+        assertEquals(origin, newFlow)
     }
 }

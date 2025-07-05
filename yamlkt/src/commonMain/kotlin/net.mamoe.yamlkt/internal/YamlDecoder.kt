@@ -997,6 +997,9 @@ internal class YamlDecoder(
                         // tokenStream.reuseToken(token)
                         FlowMapDecoder()
                     }
+                    Token.COMPLEX_KEY_BEGIN -> {
+                        BlockMapDecoder(tokenStream.currentIndent)
+                    }
 
                     Token.STRING_NULL -> {
                         yamlNullStringDecoder

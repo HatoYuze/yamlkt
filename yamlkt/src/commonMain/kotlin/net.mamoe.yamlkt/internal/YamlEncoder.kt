@@ -13,6 +13,7 @@ import kotlinx.serialization.encoding.CompositeEncoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.modules.SerializersModule
 import net.mamoe.yamlkt.*
+import net.mamoe.yamlkt.YamlNullableDynamicSerializer
 import kotlin.jvm.JvmMultifileClass
 import kotlin.jvm.JvmName
 
@@ -131,7 +132,7 @@ internal class YamlEncoder(
         // region for map
 
         private var isKey: Boolean = true
-        private inline fun structuredKeyValue(isObject: Boolean = false,block: YamlWriter.() -> Unit) {
+        private inline fun structuredKeyValue(isComplexKey: Boolean = false,block: YamlWriter.() -> Unit) {
             val isKey = isKey.also { isKey = !isKey }
             if (isKey) {
                 writer.write(' ')
@@ -139,7 +140,7 @@ internal class YamlEncoder(
                     justStarted = false
                 } else writer.write(',')
 
-                if (isObject) {
+                if (isComplexKey) {
                     writer.write("? ")
                 }
                 writer.block()
@@ -189,7 +190,7 @@ internal class YamlEncoder(
         ) {
             if (descriptor.kind == StructureKind.CLASS) {
                 super.encodeSerializableElement0(descriptor, index, serializer, value)
-            } else structuredKeyValue(true) {
+            } else structuredKeyValue(isKey && !value.isPrimitive()) {
                 super.encodeSerializableElement0(descriptor, index, serializer, value)
             }
         }
@@ -351,7 +352,7 @@ internal class YamlEncoder(
         private var justStarted = true
 
         private var isKey: Boolean = true
-        private inline fun structuredKeyValue(isObject: Boolean = false, block: YamlWriter.() -> Unit) {
+        private inline fun structuredKeyValue(isComplexKey: Boolean = false, block: YamlWriter.() -> Unit) {
             val isKey = isKey.also { isKey = !it }
             if (isKey) {
                 if (justStarted) {
@@ -359,14 +360,14 @@ internal class YamlEncoder(
                     justStarted = false
                 } else writer.writeln()
                 writer.writeIndentSmart()
-                if (isObject) {
-                    writer.write('?')
+                if (isComplexKey) {
+                    writer.write("? ")
                     writer.levelIncrease()
-                    writer.writeIndentSmart()
                 }
                 writer.block()
-                if (isObject) {
+                if (isComplexKey) {
                     writer.writeln()
+                    writer.levelDecrease()
                 }
                 writer.write(": ")
             } else {
@@ -400,7 +401,7 @@ internal class YamlEncoder(
             value: T
         ) {
             Debugging.logCustom { "encodeSerializableElement0, elementName=${descriptor.getElementName(index)}" }
-            structuredKeyValue(true) {
+            structuredKeyValue(isKey && !value.isPrimitive()) {
                 super.encodeSerializableElement0(descriptor, index, serializer, value)
             }
         }
@@ -675,7 +676,10 @@ internal class YamlEncoder(
 
         fun encodeUnquotedString(value: String) =
             encodeValue(value.toEscapedString(writer.escapeBuf, YamlBuilder.StringSerialization.NONE))
-
+        protected fun <K> K.isPrimitive(): Boolean = when (this) {
+            is Byte, is Short, is Int, is Long, is Float, is Double, is Char, is Boolean, is String -> true
+            else -> false
+        }
         final override fun encodeInline(descriptor: SerialDescriptor): Encoder =
             InlineEncoder(writer, this, serializersModule)
 
