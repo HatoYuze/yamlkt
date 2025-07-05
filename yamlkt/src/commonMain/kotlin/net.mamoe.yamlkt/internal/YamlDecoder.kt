@@ -389,13 +389,7 @@ internal class YamlDecoder(
                 throw tokenStream.contextualDecodingException("Expected whitespace after COLON but found $char for '${descriptor.serialName}'")
             }
         }
-        private fun TokenStream.reuseToken(element: Any) =
-            when (element) {
-                Token.STRING -> tokenStream.reuseToken(tokenStream.strBuff!!)
-                is Token -> tokenStream.reuseToken(element)
-                is String -> tokenStream.reuseToken(element)
-                else -> throw IllegalStateException("Unexpected element type: ${element::class}")
-            }
+
         override fun decodeElementIndex(descriptor: SerialDescriptor): Int {
             if (index.isOdd()) {
                 return index++
@@ -411,18 +405,9 @@ internal class YamlDecoder(
                     return index++
                 }
                 Token.COMPLEX_KEY_BEGIN -> {
-                    val contentStartToken = tokenStream.nextToken().takeIf { it != END_OF_FILE }
-                        ?: return READ_DONE
-
-                    if (contentStartToken in listOf(Token.MAP_BEGIN, Token.LIST_BEGIN)) {
-                        _isFlowStyle = true
-                    }
-
-                    try {
-                        return complexKeyImpl(descriptor, contentStartToken)
-                    }finally {
-                        _isFlowStyle = false
-                    }
+                    val complexKeyStartIdx = tokenStream.cur
+                    tokenStream.nextToken().takeIf { it != END_OF_FILE } ?: return READ_DONE
+                    return complexKeyImpl(descriptor,complexKeyStartIdx)
                 }
                 else -> { // even if the token is illegal, it's parent decoders' responsibility to throw the exception
                     tokenStream.reuseToken(token)
@@ -431,63 +416,51 @@ internal class YamlDecoder(
             }
         }
 
-        private fun complexKeyImpl(descriptor: SerialDescriptor,contentStartToken: Token): Int {
-            val complexKeyStartIdx = tokenStream.cur
-            fun isInSameLine() = tokenStream.source.subSequence(complexKeyStartIdx, tokenStream.cur).none { it.isLineSeparator() }
+        private fun complexKeyImpl(descriptor: SerialDescriptor,complexKeyStartIdx: Int): Int {
+            // The loop should guarantee that upon exit,reuseTokenStack must be empty. Otherwise, it should exhaust reuseTokenStack.
+            while (true) {
+                val nextToken = tokenStream.nextToken()
 
-            // FIXME: Current implementation only supports single-level nesting.
-            //  Should fix to allow proper multi-level nesting logic.
+                // Validate indentation: Should match complex key base indent unless at root
+                if (tokenStream.currentIndent < baseIndent && tokenStream.currentIndent != 0) {
+                    throw tokenStream.contextualDecodingException(
+                        "Missing colon with correct indentation (expected: $baseIndent, actual: ${tokenStream.currentIndent})"
+                    )
+                }
 
-            val elements = buildList<Any> {
-                add(contentStartToken)
-                while (true) {
-                    val nextToken = tokenStream.nextToken()
-
-                    // Validate indentation: Should match complex key base indent unless at root
-                    if (tokenStream.currentIndent < baseIndent && tokenStream.currentIndent != 0) {
-                        throw tokenStream.contextualDecodingException(
-                            "Missing colon with correct indentation (expected: $baseIndent, actual: ${tokenStream.currentIndent})"
-                        )
+                when (nextToken) {
+                    END_OF_FILE -> throw tokenStream.contextualDecodingException("Early EOF. Expected ':'")
+                    Token.COLON -> {
+                        /* COLON must appear at the same indentation level as COMPLEX_KEY_BEGIN.
+                            If indentation differs, treat it as nested content and skip special processing.*/
+                        if (tokenStream.currentIndent != baseIndent) {
+                            continue
+                        }
+                        tokenStream.reuseToken(nextToken) // reuseToken will be used during validateNextKeyValueDelimiter
+                        validateNextKeyValueDelimiter(descriptor)
+                        break
                     }
 
-                    when (nextToken) {
-                        END_OF_FILE -> throw tokenStream.contextualDecodingException("Early EOF. Expected ':'")
-                        Token.COLON -> {
-                            if (isInSameLine() && !_isFlowStyle) { // ignore the not flow-styles
-                                add(nextToken)
-                                continue
-                            }
-                            /* COLON must appear at the same indentation level as COMPLEX_KEY_BEGIN.
-                                If indentation differs, treat it as nested content and skip special processing.*/
-                            if (tokenStream.currentIndent != baseIndent) {
-                                add(nextToken)
-                                continue
-                            }
-                            tokenStream.reuseToken(nextToken)
-                            validateNextKeyValueDelimiter(descriptor)
-                            break
+                    Token.STRING -> {}
+                    else -> {
+                        if (tokenStream.currentIndent > this@BlockMapDecoder.baseIndent) {
+                            continue
                         }
-
-                        Token.STRING -> add(tokenStream.strBuff!!)
-                        else -> {
-                            if (_isFlowStyle || tokenStream.currentIndent > this@BlockMapDecoder.baseIndent) {
-                                add(nextToken)
-                                continue
-                            }
-                            throw tokenStream.contextualDecodingException(
-                                "Complex key elements must have greater indentation than base level"
-                            )
-                        }
+                        throw tokenStream.contextualDecodingException(
+                            "Complex key elements must have greater indentation than base level"
+                        )
                     }
                 }
             }
 
-            tokenStream.nextToken()?.let { tokenStream.reuseToken(it as Any) } // Value
-            elements.asReversed()
-                .onEach { tokenStream.reuseToken(it) } // Key
+            // If the inner elements of the ComplexKey are valid, it's inner decoders' responsibility to throw the exception
+            tokenStream.ignoreIndex = tokenStream.cur /* tokenStream.cur should be at the indent of the unique COLON for the complex key */
+            // Note:
+            //  Modifying cur directly (instead of reuseToken) ensures correct parsing of nested elements, as token visibility alone can't determine if stopOnComma is needed.
+            //  This function should only handle ComplexKey parsing, leaving nested elements to the inner Decoder
+            tokenStream.cur = complexKeyStartIdx
 
             index++
-            _isFlowStyle = false
             return index - 1
         }
     }

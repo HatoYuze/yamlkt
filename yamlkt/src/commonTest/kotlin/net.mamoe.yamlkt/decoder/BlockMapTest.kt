@@ -189,12 +189,26 @@ t:
     @Test
     fun testComplexKey() {
         assertEquals(
-            mapOf(listOf(1,2) to "outer_value"),
-            Yaml.decodeFromString<Map<List<Int>, String>>(
+            mapOf(
+                listOf(
+                    listOf("flow,item1", "flow,item2"),
+                    listOf(
+                        "block,item1",
+                        listOf("nested", "flow,item")
+                    ),
+                    mapOf("key1" to "value,1", "key2" to "value2")
+                ) to "ValueOfComplex"
+            ),
+            Yaml.decodeFromString<Map<List<Any>, String>>(
                 """
-                    ? - 1
-                      - 2
-                    : outer_value"""
+                    ? 
+                      - [ "flow,item1", "flow,item2" ]
+                      -
+                          - "block,item1"
+                          - [ nested, "flow,item" ]
+                      - { key1: "value,1", key2: value2 }
+                    : "ValueOfComplex"
+                """.trimIndent()
             )
         )
     }

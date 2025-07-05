@@ -162,6 +162,12 @@ internal class TokenStream(
     @JvmField
     var escapeCount = 0
 
+    /**
+     * Character index to skip during reading. Automatically resets to null after being ignored.
+     */
+    @JvmField
+    var ignoreIndex: Int? = null
+
 
     fun subSourceTrimEnd(offset: Int, endIndex: Int): String {
         for (i in endIndex - 1 downTo offset) {
@@ -212,6 +218,8 @@ internal class TokenStream(
     /**
      * Pop the last element of [reuseTokenStack] if possible, or read a token or a string from [source]
      *
+     * Skips chars at [ignoreIndex] (resets to `null` after skipping) and increments [currentIndent].
+     *
      * Returns [END_OF_FILE] if end of file is reached
      *
      * If [Token.STRING] is returned, [strBuff] will also be updated
@@ -231,7 +239,12 @@ internal class TokenStream(
         newLined = false
         leadingSpace = 0
         //currentIndent = 0
-        whileNotEOF { char ->
+        whileNotEOFIndexed { char, index ->
+            if (ignoreIndex != null && index == ignoreIndex) {
+                ignoreIndex = null
+                currentIndent++
+                return@whileNotEOFIndexed
+            }
             if (char == ' ') {
                 currentIndent++
                 leadingSpace++
@@ -331,6 +344,17 @@ internal inline fun TokenStream.whileNotEOF(block: (char: Char) -> Unit): Nothin
     }
     while (!endOfInput) {
         block(source[cur++]) // don't change
+    }
+    return null
+}
+
+@OptIn(ExperimentalContracts::class)
+internal inline fun TokenStream.whileNotEOFIndexed(block: (char: Char, idx: Int) -> Unit): Nothing? {
+    contract {
+        callsInPlace(block, InvocationKind.UNKNOWN)
+    }
+    while (!endOfInput) {
+        block(source[cur++], cur) // don't change
     }
     return null
 }
